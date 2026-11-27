@@ -71,7 +71,6 @@ main {
   color: #cbd5e1;
 }
 
-.panel input[type='text'],
 .panel input:not([type]),
 .panel select {
   padding: 0.55rem 0.7rem;
