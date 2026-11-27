@@ -65,8 +65,8 @@ export default function App() {
         randomize_seed: true,
       })
 
-      const arr = result as unknown as Array<{ url?: string; path?: string }>
-      const out = arr[0]
+      const data = (result as unknown as { data: Array<{ url?: string; path?: string }> }).data
+      const out = data?.[0]
       const url = out?.url || out?.path || ''
       if (!url) throw new Error('no video url')
       setVideoUrl(url)
