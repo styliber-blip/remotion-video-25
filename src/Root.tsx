@@ -6,17 +6,14 @@ export const Root = () => {
     <Composition
       id="MyVideo"
       component={MyVideo}
-      durationInFrames={120}
+      durationInFrames={150}
       fps={30}
       width={1280}
       height={720}
       defaultProps={{
-        title: 'مرحبا بكم',
-        subtitle: 'موشن غرافيك من السحابة',
-        bg1: '#0f172a',
-        bg2: '#1e293b',
-        accent: '#38bdf8',
-        style: 'spin',
+        imageUrl: '',
+        motion: 'kenburns',
+        intensity: 1,
       }}
     />
   )
