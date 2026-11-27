@@ -1,19 +1,40 @@
 name: Cloud Render Remotion Video
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: npm ci
-      - run: npx remotion render MyVideo out.mp4 --browser-executable=chromium
-      - uses: actions/upload-artifact@v4
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install system dependencies (Chromium + FFmpeg + Xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser ffmpeg xvfb
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Render video on cloud (no local resources used)
+        run: |
+          xvfb-run -a npx remotion render \
+            --browser-executable /usr/bin/chromium-browser \
+            src/index.ts MyVideo \
+            --output out.mp4
+
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v4
         with:
           name: rendered-video
           path: out.mp4
