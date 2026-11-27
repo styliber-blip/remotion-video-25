@@ -37,20 +37,24 @@ export default function App() {
     setBusy(true)
     setStatus('جارٍ التجهيز...')
     try {
-      let file = imageRef.current
-      if (!file) {
+      let imageUrl: string
+      if (imageRef.current) {
+        imageUrl = await new Promise<string>((resolve) => {
+          const r = new FileReader()
+          r.onload = () => resolve(String(r.result))
+          r.readAsDataURL(imageRef.current as File)
+        })
+      } else {
         setStatus('جارٍ توليد الصورة...')
-        const res = await fetch(buildImage(text))
-        const blob = await res.blob()
-        file = new File([blob], 'frame.png', { type: 'image/png' })
+        imageUrl = buildImage(text)
       }
 
       setStatus('جارٍ الاتصال بالنموذج (قد يستغرق دقيقة)...')
       const client = await Client.connect(SPACE, {
         hf_token: token ? (token as `hf_${string}`) : undefined,
       })
-      const result = await client.predict('/generate_video', {
-        input_image: file,
+      const result = await client.predict('/run/generate_video', {
+        input_image: { url: imageUrl, meta: { _type: 'gradio.FileData' } },
         prompt: text,
         steps: 6,
         negative_prompt: '',
