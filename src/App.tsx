@@ -1,100 +1,84 @@
 import { useRef, useState } from 'react'
-import { Player } from '@remotion/player'
-import { MyVideo, type MotionConfig, type MotionType } from './MyVideo'
+import { Client } from '@gradio/client'
 import './App.css'
 
 type Msg = { role: 'user' | 'bot'; text: string }
 
-const defaultConfig: MotionConfig = {
-  imageUrl: '',
-  motion: 'kenburns',
-  intensity: 1,
-}
+const SPACE = 'zerogpu-aoti/wan2-2-fp8da-aoti-faster'
 
 const buildImage = (prompt: string) =>
   `https://image.pollinations.ai/prompt/${encodeURIComponent(
     prompt,
   )}?width=1280&height=720&nologo=true&seed=${Math.floor(Math.random() * 9999)}`
 
-const askAI = async (text: string): Promise<string> => {
-  const system =
-    'You convert a user motion-graphic request into JSON only. ' +
-    'Return strictly JSON with keys: imagePrompt (string, detailed english prompt for a character/scene), ' +
-    'motion (one of kenburns,pan,zoom,rotate,shake,slide), intensity (number 0.2-2), durationSeconds (number 3-10). ' +
-    'No markdown, no extra text.'
-  const prompt = `${system}\nUser request: ${text}`
-  const res = await fetch(
-    `https://text.pollinations.ai/${encodeURIComponent(prompt)}`,
-  )
-  return (await res.text()).trim()
-}
-
 export default function App() {
   const [messages, setMessages] = useState<Msg[]>([
-    { role: 'bot', text: 'صف لي الموشن الذي تريده، أو تحدث عبر الميكروفون.' },
+    {
+      role: 'bot',
+      text: 'صف الحركة أو تحدث عبر الميكروفون، ثم ارفع صورة (أو دعني أولّدها).',
+    },
   ])
-  const [config, setConfig] = useState<MotionConfig>(defaultConfig)
+  const [videoUrl, setVideoUrl] = useState('')
+  const [status, setStatus] = useState('')
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [listening, setListening] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  const durationInFrames = Math.round(
-    (config as MotionConfig & { durationSeconds?: number }).durationSeconds
-      ? ((config as MotionConfig & { durationSeconds?: number })
-          .durationSeconds as number) * 30
-      : 150,
+  const [token, setToken] = useState(
+    () => localStorage.getItem('hf_token') || '',
   )
+  const fileRef = useRef<HTMLInputElement>(null)
+  const imageRef = useRef<File | null>(null)
 
-  const send = async (raw: string) => {
+  const generate = async (raw: string) => {
     const text = raw.trim()
     if (!text || busy) return
     setInput('')
     setMessages((m) => [...m, { role: 'user', text }])
     setBusy(true)
+    setStatus('جارٍ التجهيز...')
     try {
-      const answer = await askAI(text)
-      let parsed: Record<string, unknown> = {}
-      try {
-        parsed = JSON.parse(
-          answer.replace(/```json/gi, '').replace(/```/g, '').trim(),
-        )
-      } catch {
-        parsed = {}
+      let file = imageRef.current
+      if (!file) {
+        setStatus('جارٍ توليد الصورة...')
+        const res = await fetch(buildImage(text))
+        const blob = await res.blob()
+        file = new File([blob], 'frame.png', { type: 'image/png' })
       }
-      const imagePrompt =
-        typeof parsed.imagePrompt === 'string' && parsed.imagePrompt
-          ? parsed.imagePrompt
-          : text
-      const motion = (
-        ['kenburns', 'pan', 'zoom', 'rotate', 'shake', 'slide'].includes(
-          String(parsed.motion),
-        )
-          ? parsed.motion
-          : 'kenburns'
-      ) as MotionType
-      const intensity =
-        typeof parsed.intensity === 'number' ? parsed.intensity : 1
-      const durationSeconds =
-        typeof parsed.durationSeconds === 'number' ? parsed.durationSeconds : 5
 
-      setConfig({
-        imageUrl: buildImage(imagePrompt),
-        motion,
-        intensity,
-        durationSeconds,
-      } as MotionConfig)
+      setStatus('جارٍ الاتصال بالنموذج (قد يستغرق دقيقة)...')
+      const client = await Client.connect(SPACE, {
+        hf_token: token ? (token as `hf_${string}`) : undefined,
+      })
+      const result = await client.predict('/generate_video', {
+        input_image: file,
+        prompt: text,
+        steps: 6,
+        negative_prompt: '',
+        duration_seconds: 4,
+        guidance_scale: 1,
+        guidance_scale_2: 1,
+        seed: 42,
+        randomize_seed: true,
+      })
+
+      const arr = result as unknown as Array<{ url?: string; path?: string }>
+      const out = arr[0]
+      const url = out?.url || out?.path || ''
+      if (!url) throw new Error('no video url')
+      setVideoUrl(url)
+      setStatus('تم إنشاء الفيديو ✅')
+      setMessages((m) => [
+        ...m,
+        { role: 'bot', text: 'تم توليد الفيديو، يمكنك تشغيله الآن.' },
+      ])
+    } catch (e) {
+      setStatus('تعذّر التوليد — قد يكون النموذج مزدحماً أو الحصة اليومية انتهت.')
       setMessages((m) => [
         ...m,
         {
           role: 'bot',
-          text: `تم: حركة ${motion} لمدة ${durationSeconds} ثانية.`,
+          text: 'تعذّر التوليد. أضف مفتاح Hugging Face مجاني لرفع الحصة، أو حاول لاحقاً.',
         },
-      ])
-    } catch {
-      setMessages((m) => [
-        ...m,
-        { role: 'bot', text: 'تعذر الاتصال بالذكاء الاصطناعي، حاول مجدداً.' },
       ])
     } finally {
       setBusy(false)
@@ -103,8 +87,11 @@ export default function App() {
 
   const onFile = (file?: File) => {
     if (!file) return
-    const url = URL.createObjectURL(file)
-    setConfig((c) => ({ ...c, imageUrl: url }))
+    imageRef.current = file
+    setMessages((m) => [
+      ...m,
+      { role: 'bot', text: 'تم رفع الصورة، صف الحركة الآن.' },
+    ])
   }
 
   const startVoice = () => {
@@ -119,14 +106,14 @@ export default function App() {
     if (!SR) {
       setMessages((m) => [
         ...m,
-        { role: 'bot', text: 'المتصفح لا يدعم الإدخال الصوتي، استخدم الكتابة.' },
+        { role: 'bot', text: 'المتصفح لا يدعم الصوت، استخدم الكتابة.' },
       ])
       return
     }
     const rec = new SR()
     rec.lang = 'ar'
     rec.interimResults = false
-    rec.onresult = (e) => send(e.results[0][0].transcript)
+    rec.onresult = (e) => generate(e.results[0][0].transcript)
     rec.onend = () => setListening(false)
     setListening(true)
     rec.start()
@@ -136,22 +123,25 @@ export default function App() {
     <div className="studio">
       <header>
         <h1>AI Motion Studio</h1>
-        <p>تحدث أو اكتب وصف الحركة، وارفع صورة — الذكاء الاصطناعي المجاني ينفّذ</p>
+        <p>نموذج Wan 2.2 المجاني — صورة + وصف = فيديو متحرك</p>
       </header>
 
       <main>
         <section className="preview">
-          <Player
-            component={MyVideo}
-            inputProps={config}
-            durationInFrames={durationInFrames}
-            fps={30}
-            compositionWidth={1280}
-            compositionHeight={720}
-            style={{ width: '100%' }}
-            controls
-            loop
-          />
+          {videoUrl ? (
+            <video
+              key={videoUrl}
+              src={videoUrl}
+              controls
+              autoPlay
+              loop
+              style={{ width: '100%' }}
+            />
+          ) : (
+            <div className="placeholder">
+              {status || 'ارفع صورة أو اكتب وصفاً للبدء'}
+            </div>
+          )}
         </section>
 
         <aside className="panel">
@@ -168,10 +158,10 @@ export default function App() {
               value={input}
               placeholder="صف الحركة..."
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && send(input)}
+              onKeyDown={(e) => e.key === 'Enter' && generate(input)}
             />
-            <button onClick={() => send(input)} disabled={busy}>
-              إرسال
+            <button onClick={() => generate(input)} disabled={busy}>
+              {busy ? '...' : 'إنشاء'}
             </button>
           </div>
 
@@ -190,11 +180,25 @@ export default function App() {
               onChange={(e) => onFile(e.target.files?.[0])}
             />
           </div>
+
+          <label className="token">
+            مفتاح HF (اختياري لرفع الحصة)
+            <input
+              value={token}
+              placeholder="hf_..."
+              onChange={(e) => {
+                setToken(e.target.value)
+                localStorage.setItem('hf_token', e.target.value)
+              }}
+            />
+          </label>
+
+          {status && <p className="status">{status}</p>}
         </aside>
       </main>
 
       <footer>
-        <p>مجاني بالكامل — Pollinations AI + معالجة على السحابة</p>
+        <p>مجاني — Hugging Face Wan 2.2 + Pollinations</p>
       </footer>
     </div>
   )
@@ -203,7 +207,9 @@ export default function App() {
 type SpeechRecognitionLike = {
   lang: string
   interimResults: boolean
-  onresult: (e: { results: { [k: number]: { [k: number]: { transcript: string } } } }) => void
+  onresult: (e: {
+    results: { [k: number]: { [k: number]: { transcript: string } } }
+  }) => void
   onend: () => void
   start: () => void
 }
